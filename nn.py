@@ -366,13 +366,22 @@ def build_model():
 
     model = Sequential()
     model.add(Dense(4096, input_dim=MAX_FILE_SIZE))
-    model.add(Activation('relu'))
+    model.add(BatchNormalization())
+    model.add(Activation('swish'))  # Using Swish activation function
+    model.add(Dropout(0.5))  # Adding dropout for regularization
+
+    # Adding more layers for increased model depth
+    model.add(Dense(2048))
+    model.add(BatchNormalization())
+    model.add(Activation('swish'))
+    model.add(Dropout(0.5))
+
     model.add(Dense(num_classes))
     model.add(Activation('sigmoid'))
 
-    opt = keras.optimizers.nadam(lr=0.0001)
+    opt = Nadam(lr=0.0001)
 
-    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=[accur_1])
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=[Accuracy()])  # Using Accuracy metric
     model.summary()
 
     return model
