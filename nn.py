@@ -381,7 +381,7 @@ def build_model():
 
     opt = Nadam(lr=0.0001)
 
-    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=[Accuracy()])  # Using Accuracy metric
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=[accur_1])  # Using Accuracy metric
     model.summary()
 
     return model
