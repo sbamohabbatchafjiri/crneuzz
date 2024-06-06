@@ -16,6 +16,10 @@ from tensorflow import set_random_seed
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation
 from keras.callbacks import ModelCheckpoint
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Activation, Dropout, BatchNormalization
+from tensorflow.keras.optimizers import Nadam
+from tensorflow.keras.metrics import Accuracy
 
 HOST = '127.0.0.1'
 PORT = 12012
