@@ -1,4 +1,7 @@
-import argparse
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+
 import os
 import sys
 import glob
@@ -12,14 +15,10 @@ import numpy as np
 import tensorflow as tf
 import keras.backend as K
 from collections import Counter
-from tensorflow import set_random_seed
+import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation
 from keras.callbacks import ModelCheckpoint
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Activation, Dropout, BatchNormalization
-from tensorflow.keras.optimizers import Nadam
-from tensorflow.keras.metrics import Accuracy
 
 HOST = '127.0.0.1'
 PORT = 12012
@@ -28,21 +27,19 @@ MAX_FILE_SIZE = 10000
 MAX_BITMAP_SIZE = 2000
 round_cnt = 0
 # Choose a seed for random initilzation
-#seed = int(time.time())
+# seed = int(time.time())
 seed = 12
 np.random.seed(seed)
 random.seed(seed)
-set_random_seed(seed)
+tf.random.set_seed(seed)
 seed_list = glob.glob('./seeds/*')
 new_seeds = glob.glob('./seeds/id_*')
 SPLIT_RATIO = len(seed_list)
 # get binary argv
 argvv = sys.argv[1:]
-args = None
+
 
 # process training data from afl raw data
-
-
 def process_data():
     global MAX_BITMAP_SIZE
     global MAX_FILE_SIZE
@@ -50,31 +47,26 @@ def process_data():
     global seed_list
     global new_seeds
 
-    output_folder = os.path.abspath(args.output_folder)
     # shuffle training samples
-    seed_list = glob.glob('{}/*'.format(output_folder))
+    seed_list = glob.glob('./seeds/*')
     seed_list.sort()
     SPLIT_RATIO = len(seed_list)
     rand_index = np.arange(SPLIT_RATIO)
     np.random.shuffle(seed_list)
-    new_seeds = glob.glob('{}/id_*'.format(output_folder))
+    new_seeds = glob.glob('./seeds/id_*')
 
     call = subprocess.check_output
 
     # get MAX_FILE_SIZE
     cwd = os.getcwd()
-    max_file_name = call(['ls', '-S', output_folder]).decode('utf8').split('\n')[0].rstrip('\n')
-    MAX_FILE_SIZE = os.path.getsize(output_folder + '/' + max_file_name)
+    max_file_name = call(['ls', '-S', cwd + '/seeds/']).decode('utf8').split('\n')[0].rstrip('\n')
+    MAX_FILE_SIZE = os.path.getsize(cwd + '/seeds/' + max_file_name)
 
     # create directories to save label, spliced seeds, variant length seeds, crashes and mutated seeds.
-    if os.path.isdir("./bitmaps/") == False:
-        os.makedirs('./bitmaps')
-    if os.path.isdir("./splice_seeds/") == False:
-        os.makedirs('./splice_seeds')
-    if os.path.isdir("./vari_seeds/") == False:
-        os.makedirs('./vari_seeds')
-    if os.path.isdir("./crashes/") == False:
-        os.makedirs('./crashes')
+    os.path.isdir("./bitmaps/") or os.makedirs("./bitmaps")
+    os.path.isdir("./splice_seeds/") or os.makedirs("./splice_seeds")
+    os.path.isdir("./vari_seeds/") or os.makedirs("./vari_seeds")
+    os.path.isdir("./crashes/") or os.makedirs("./crashes")
 
     # obtain raw bitmaps
     raw_bitmap = {}
@@ -83,14 +75,13 @@ def process_data():
     for f in seed_list:
         tmp_list = []
         try:
-            mem_limit = '512' if not args.enable_asan else 'none'
             # append "-o tmp_file" to strip's arguments to avoid tampering tested binary.
             if argvv[0] == './strip':
-                out = call(['./afl-showmap', '-q', '-e', '-o', '/dev/stdout', '-m', mem_limit, '-t', '500'] + args.target + [f] + ['-o', 'tmp_file'])
+                out = call(['./afl-showmap', '-q', '-e', '-o', '/dev/stdout', '-m', '512', '-t', '500'] + argvv + [f] + ['-o', 'tmp_file'])
             else:
-                out = call(['./afl-showmap', '-q', '-e', '-o', '/dev/stdout', '-m', mem_limit, '-t', '500'] + args.target + [f])
-        except subprocess.CalledProcessError as e:
-            print("find a crash", e)
+                out = call(['./afl-showmap', '-q', '-e', '-o', '/dev/stdout', '-m', '512', '-t', '500'] + argvv + [f])
+        except subprocess.CalledProcessError:
+            print("find a crash")
         for line in out.splitlines():
             edge = line.split(b':')[0]
             tmp_cnt.append(edge)
@@ -134,9 +125,8 @@ def generate_training_data(lb, ub):
         bitmap[i - lb] = np.load(file_name)
     return seed, bitmap
 
+
 # learning rate decay
-
-
 def step_decay(epoch):
     initial_lrate = 0.001
     drop = 0.7
@@ -146,6 +136,7 @@ def step_decay(epoch):
 
 
 class LossHistory(keras.callbacks.Callback):
+
     def on_train_begin(self, logs={}):
         self.losses = []
         self.lr = []
@@ -155,17 +146,15 @@ class LossHistory(keras.callbacks.Callback):
         self.lr.append(step_decay(len(self.losses)))
         print(step_decay(len(self.losses)))
 
+
 # compute jaccard accuracy for multiple label
-
-
 def accur_1(y_true, y_pred):
     y_true = tf.round(y_true)
     pred = tf.round(y_pred)
     summ = tf.constant(MAX_BITMAP_SIZE, dtype=tf.float32)
     wrong_num = tf.subtract(summ, tf.reduce_sum(tf.cast(tf.equal(y_true, pred), tf.float32), axis=-1))
     right_1_num = tf.reduce_sum(tf.cast(tf.logical_and(tf.cast(y_true, tf.bool), tf.cast(pred, tf.bool)), tf.float32), axis=-1)
-    ret = K.mean(tf.divide(right_1_num, tf.add(right_1_num, wrong_num)))
-    return ret
+    return K.mean(tf.divide(right_1_num, tf.add(right_1_num, wrong_num)))
 
 
 def train_generate(batch_size):
@@ -184,9 +173,8 @@ def train_generate(batch_size):
                 x = x.astype('float32') / 255
             yield (x, y)
 
+
 # get vector representation of input
-
-
 def vectorize_file(fl):
     seed = np.zeros((1, MAX_FILE_SIZE))
     tmp = open(fl, 'rb').read()
@@ -197,14 +185,13 @@ def vectorize_file(fl):
     seed = seed.astype('float32') / 255
     return seed
 
+
 # splice two seeds to a new seed
-
-
 def splice_seed(fl1, fl2, idxx):
     tmp1 = open(fl1, 'rb').read()
     ret = 1
     randd = fl2
-    while(ret == 1):
+    while ret == 1:
         tmp2 = open(randd, 'rb').read()
         if len(tmp1) >= len(tmp2):
             lenn = len(tmp2)
@@ -232,19 +219,18 @@ def splice_seed(fl1, fl2, idxx):
             with open('./splice_seeds/tmp_' + str(idxx), 'wb') as f:
                 f.write(bytearray(tail))
             ret = 0
-        print((f_diff, l_diff))
+        print(f_diff, l_diff)
         randd = random.choice(seed_list)
 
+
 # compute gradient for given input
-
-
 def gen_adv2(f, fl, model, layer_list, idxx, splice):
     adv_list = []
     loss = layer_list[-2][1].output[:, f]
-    grads = K.gradients(loss, model.input)[0]
+    grads = tf.GradientTape(loss, model.input)[0]
     iterate = K.function([model.input], [loss, grads])
     ll = 2
-    while(fl[0] == fl[1]):
+    while fl[0] == fl[1]:
         fl[1] = random.choice(seed_list)
 
     for index in range(ll):
@@ -254,23 +240,22 @@ def gen_adv2(f, fl, model, layer_list, idxx, splice):
         val = np.sign(grads_value[0][idx])
         adv_list.append((idx, val, fl[index]))
 
-    if(splice == 1):
-        # do not generate spliced seed for the first round
-        if(round_cnt != 0):
-            if(round_cnt % 2 == 0):
-                splice_seed(fl[0], fl[1], idxx)
-                x = vectorize_file('./splice_seeds/tmp_' + str(idxx))
-                loss_value, grads_value = iterate([x])
-                idx = np.flip(np.argsort(np.absolute(grads_value), axis=1)[:, -MAX_FILE_SIZE:].reshape((MAX_FILE_SIZE,)), 0)
-                val = np.sign(grads_value[0][idx])
-                adv_list.append((idx, val, './splice_seeds/tmp_' + str(idxx)))
-            else:
-                splice_seed(fl[0], fl[1], idxx + 500)
-                x = vectorize_file('./splice_seeds/tmp_' + str(idxx + 500))
-                loss_value, grads_value = iterate([x])
-                idx = np.flip(np.argsort(np.absolute(grads_value), axis=1)[:, -MAX_FILE_SIZE:].reshape((MAX_FILE_SIZE,)), 0)
-                val = np.sign(grads_value[0][idx])
-                adv_list.append((idx, val, './splice_seeds/tmp_' + str(idxx + 500)))
+    # do not generate spliced seed for the first round
+    if splice == 1 and round_cnt != 0:
+        if round_cnt % 2 == 0:
+            splice_seed(fl[0], fl[1], idxx)
+            x = vectorize_file('./splice_seeds/tmp_' + str(idxx))
+            loss_value, grads_value = iterate([x])
+            idx = np.flip(np.argsort(np.absolute(grads_value), axis=1)[:, -MAX_FILE_SIZE:].reshape((MAX_FILE_SIZE,)), 0)
+            val = np.sign(grads_value[0][idx])
+            adv_list.append((idx, val, './splice_seeds/tmp_' + str(idxx)))
+        else:
+            splice_seed(fl[0], fl[1], idxx + 500)
+            x = vectorize_file('./splice_seeds/tmp_' + str(idxx + 500))
+            loss_value, grads_value = iterate([x])
+            idx = np.flip(np.argsort(np.absolute(grads_value), axis=1)[:, -MAX_FILE_SIZE:].reshape((MAX_FILE_SIZE,)), 0)
+            val = np.sign(grads_value[0][idx])
+            adv_list.append((idx, val, './splice_seeds/tmp_' + str(idxx + 500)))
 
     return adv_list
 
@@ -279,10 +264,10 @@ def gen_adv2(f, fl, model, layer_list, idxx, splice):
 def gen_adv3(f, fl, model, layer_list, idxx, splice):
     adv_list = []
     loss = layer_list[-2][1].output[:, f]
-    grads = K.gradients(loss, model.input)[0]
+    grads = tf.GradientTape(loss, model.input)[0]
     iterate = K.function([model.input], [loss, grads])
     ll = 2
-    while(fl[0] == fl[1]):
+    while fl[0] == fl[1]:
         fl[1] = random.choice(seed_list)
 
     for index in range(ll):
@@ -293,16 +278,15 @@ def gen_adv3(f, fl, model, layer_list, idxx, splice):
         val = np.random.choice([1, -1], MAX_FILE_SIZE, replace=True)
         adv_list.append((idx, val, fl[index]))
 
-    if(splice == 1):
-        # do not generate spliced seed for the first round
-        if(round_cnt != 0):
-            splice_seed(fl[0], fl[1], idxx)
-            x = vectorize_file('./splice_seeds/tmp_' + str(idxx))
-            loss_value, grads_value = iterate([x])
-            idx = np.flip(np.argsort(np.absolute(grads_value), axis=1)[:, -MAX_FILE_SIZE:].reshape((MAX_FILE_SIZE,)), 0)
-            #val = np.sign(grads_value[0][idx])
-            val = np.random.choice([1, -1], MAX_FILE_SIZE, replace=True)
-            adv_list.append((idx, val, './splice_seeds/tmp_' + str(idxx)))
+    # do not generate spliced seed for the first round
+    if splice == 1 and round_cnt != 0:
+        splice_seed(fl[0], fl[1], idxx)
+        x = vectorize_file('./splice_seeds/tmp_' + str(idxx))
+        loss_value, grads_value = iterate([x])
+        idx = np.flip(np.argsort(np.absolute(grads_value), axis=1)[:, -MAX_FILE_SIZE:].reshape((MAX_FILE_SIZE,)), 0)
+        # val = np.sign(grads_value[0][idx])
+        val = np.random.choice([1, -1], MAX_FILE_SIZE, replace=True)
+        adv_list.append((idx, val, './splice_seeds/tmp_' + str(idxx)))
 
     return adv_list
 
@@ -312,7 +296,7 @@ def gen_mutate2(model, edge_num, sign):
     tmp_list = []
     # select seeds
     print("#######debug" + str(round_cnt))
-    if(round_cnt == 0):
+    if round_cnt == 0:
         new_seed_list = seed_list
     else:
         new_seed_list = new_seeds
@@ -327,11 +311,7 @@ def gen_mutate2(model, edge_num, sign):
         rand_seed2 = [seed_list[i] for i in np.random.choice(len(seed_list), edge_num, replace=False)]
 
     # function pointer for gradient computation
-    fn = gen_adv2
-    if (sign):
-        fn = gen_adv2
-    else:
-        fn = gen_adv3
+    fn = gen_adv2 if sign else gen_adv3
 
     # select output neurons to compute gradient
     interested_indice = np.random.choice(MAX_BITMAP_SIZE, edge_num)
@@ -340,7 +320,7 @@ def gen_mutate2(model, edge_num, sign):
     with open('gradient_info_p', 'w') as f:
         for idxx in range(len(interested_indice[:])):
             # kears's would stall after multiple gradient compuation. Release memory and reload model to fix it.
-            if (idxx % 100 == 0):
+            if idxx % 100 == 0:
                 del model
                 K.clear_session()
                 model = build_model()
@@ -366,22 +346,13 @@ def build_model():
 
     model = Sequential()
     model.add(Dense(4096, input_dim=MAX_FILE_SIZE))
-    model.add(BatchNormalization())
-    model.add(Activation('swish'))  # Using Swish activation function
-    model.add(Dropout(0.5))  # Adding dropout for regularization
-
-    # Adding more layers for increased model depth
-    model.add(Dense(2048))
-    model.add(BatchNormalization())
-    model.add(Activation('swish'))
-    model.add(Dropout(0.5))
-
+    model.add(Activation('relu'))
     model.add(Dense(num_classes))
     model.add(Activation('sigmoid'))
 
-    opt = Nadam(lr=0.0001)
+    opt = keras.optimizers.Adam(lr=0.0001)
 
-    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=[accur_1])  # Using Accuracy metric
+    model.compile(loss='binary_crossentropy', optimizer=opt, metrics=[accur_1])
     model.summary()
 
     return model
@@ -406,23 +377,18 @@ def gen_grad(data):
     model = build_model()
     train(model)
     # model.load_weights('hard_label.h5')
-    if(data[:5] == "train"):
-        gen_mutate2(model, 500, True)
-    else:
-        gen_mutate2(model, 500, False)
+    gen_mutate2(model, 500, data[:5] == b"train")
     round_cnt = round_cnt + 1
     print(time.time() - t0)
 
 
 def setup_server():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # Allow re-use so we don't have to wait if the process crashes.
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((HOST, PORT))
     sock.listen(1)
     conn, addr = sock.accept()
-    print('connected by neuzz execution moduel' + str(addr))
-    gen_grad('train')
+    print('connected by neuzz execution moduel ' + str(addr))
+    gen_grad(b"train")
     conn.sendall(b"start")
     while True:
         data = conn.recv(1024)
@@ -434,20 +400,5 @@ def setup_server():
     conn.close()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="""Runs the background machine
-                        learning process for Neuzz.""")
-    parser.add_argument('-e',
-                        '--enable-asan',
-                        help='Enable ASAN (runs afl-showmap with -m none)',
-                        default=False,
-                        action='store_true')
-    parser.add_argument('-o',
-                        '--output-folder',
-                        help="""The -o folder provided to afl, this is where the
-                        Neuzz process reads seeds from.""",
-                        default='seeds')
-    parser.add_argument('target', nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-
+if __name__ == '__main__':
     setup_server()
